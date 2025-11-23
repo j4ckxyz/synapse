@@ -1,15 +1,14 @@
+import type { UIMessage } from "@ai-sdk/react";
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import { useApiKey } from "@/hooks/useApiKey";
+import { useCustomUrl } from "@/hooks/useCustomUrl";
+import { useModel } from "@/hooks/useModel";
+import { useProvider } from "@/hooks/useProvider";
+import { ApiProviderSettings } from "./ApiProviderSettings";
 import { InputBar } from "./InputBar";
 import { MessageList } from "./MessageList";
-import { TreeViewButton } from "./TreeViewButton";
-import { ApiProviderSettings } from "./ApiProviderSettings";
-import { useApiKey } from "@/hooks/useApiKey";
-import { useProvider } from "@/hooks/useProvider";
-import { useModel } from "@/hooks/useModel";
-import { useCustomUrl } from "@/hooks/useCustomUrl";
-import { useState } from "react";
-import type { UIMessage } from "@ai-sdk/react";
 
 interface ChatInterfaceProps {
 	conversationId: string;
@@ -51,13 +50,19 @@ export function ChatInterface({
 					"Content-Type": "application/json",
 				},
 				body: JSON.stringify({
-					messages: messages.map(m => ({
-						role: m.role,
-						content: m.parts.map(p => p.type === "text" ? p.text : "").join("")
-					})).concat([{
-						role: "user",
-						content: text
-					}]),
+					messages: messages
+						.map((m) => ({
+							role: m.role,
+							content: m.parts
+								.map((p) => (p.type === "text" ? p.text : ""))
+								.join(""),
+						}))
+						.concat([
+							{
+								role: "user",
+								content: text,
+							},
+						]),
 					provider,
 					apiKey: currentApiKey,
 					model,
@@ -75,7 +80,7 @@ export function ChatInterface({
 			}
 
 			const decoder = new TextDecoder();
-			let assistantMessage: UIMessage = {
+			const assistantMessage: UIMessage = {
 				id: (Date.now() + 1).toString(),
 				role: "assistant",
 				parts: [{ type: "text", text: "" }],
@@ -91,10 +96,7 @@ export function ChatInterface({
 				if (assistantMessage.parts[0].type === "text") {
 					assistantMessage.parts[0].text += chunk;
 				}
-				setMessages((prev) => [
-					...prev.slice(0, -1),
-					{ ...assistantMessage },
-				]);
+				setMessages((prev) => [...prev.slice(0, -1), { ...assistantMessage }]);
 			}
 		} catch (error) {
 			console.error("Error sending message:", error);
@@ -133,11 +135,6 @@ export function ChatInterface({
 						disabled={!currentApiKey}
 					/>
 				</div>
-			</div>
-
-			{/* Tree View Button - now only shows on mobile */}
-			<div className="md:hidden">
-				<TreeViewButton conversationId={conversationId} />
 			</div>
 		</div>
 	);
