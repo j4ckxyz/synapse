@@ -5,19 +5,21 @@ interface InputBarProps {
 	onSend: (message: string) => void;
 	isLoading: boolean;
 	placeholder?: string;
+	disabled?: boolean;
 }
 
 export function InputBar({
 	onSend,
 	isLoading,
 	placeholder = "Message ChatGPT",
+	disabled = false,
 }: InputBarProps) {
 	const [input, setInput] = useState("");
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 
 	const handleSubmit = (e: React.FormEvent) => {
 		e.preventDefault();
-		if (input.trim() && !isLoading) {
+		if (input.trim() && !isLoading && !disabled) {
 			onSend(input.trim());
 			setInput("");
 		}
@@ -34,9 +36,12 @@ export function InputBar({
 	useEffect(() => {
 		if (textareaRef.current) {
 			textareaRef.current.style.height = "auto";
-			textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+			textareaRef.current.style.height = `${Math.min(
+				textareaRef.current.scrollHeight,
+				200,
+			)}px`;
 		}
-	}, []);
+	}, [input]);
 
 	return (
 		<form onSubmit={handleSubmit} className="relative">
@@ -49,12 +54,13 @@ export function InputBar({
 					placeholder={placeholder}
 					className="flex-1 bg-transparent resize-none outline-none px-4 py-3 text-[15px] max-h-[200px] placeholder:text-gray-500 dark:placeholder:text-gray-400"
 					rows={1}
+					disabled={disabled}
 				/>
 				<button
 					type="submit"
-					disabled={!input.trim() || isLoading}
+					disabled={!input.trim() || isLoading || disabled}
 					className={`m-2 p-2 rounded-lg transition-colors ${
-						input.trim() && !isLoading
+						input.trim() && !isLoading && !disabled
 							? "bg-black dark:bg-white text-white dark:text-black hover:bg-gray-800 dark:hover:bg-gray-200"
 							: "bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed"
 					}`}

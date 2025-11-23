@@ -1,192 +1,109 @@
-import { type UIMessage, useChat } from "@ai-sdk/react";
-import { useNavigate } from "@tanstack/react-router";
-import { TextStreamChatTransport } from "ai";
-import { useEffect, useMemo, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { useConversation, useNodeAncestors } from "@/hooks/useConversation";
-import type { Id } from "../../../convex/_generated/dataModel";
-import { FlowMiniMap } from "./FlowMiniMap";
 import { InputBar } from "./InputBar";
 import { MessageList } from "./MessageList";
-import { ResizableLayout } from "./ResizableLayout";
 import { TreeViewButton } from "./TreeViewButton";
+import { ApiProviderSettings } from "./ApiProviderSettings";
+import { useApiKey } from "@/hooks/useApiKey";
+import { useProvider } from "@/hooks/useProvider";
+import { useModel } from "@/hooks/useModel";
+import { useCustomUrl } from "@/hooks/useCustomUrl";
+import { useState } from "react";
+import type { UIMessage } from "@ai-sdk/react";
 
 interface ChatInterfaceProps {
-	conversationId: Id<"conversations">;
-	fromNodeId?: Id<"nodes">;
+	conversationId: string;
+	fromNodeId?: string;
 	forkingFromPrompt?: string;
 }
 
 export function ChatInterface({
 	conversationId,
-	fromNodeId,
 	forkingFromPrompt,
 }: ChatInterfaceProps) {
-	const navigate = useNavigate();
-	const conversation = useConversation(conversationId);
-	const ancestors = useNodeAncestors(fromNodeId ?? null);
+	const { getApiKey } = useApiKey();
+	const { provider } = useProvider();
+	const { model } = useModel();
+	const { customUrl } = useCustomUrl();
+	const [messages, setMessages] = useState<UIMessage[]>([]);
+	const [isLoading, setIsLoading] = useState(false);
 
-	const initialMessages: UIMessage[] = useMemo(() => {
-		if (!ancestors || ancestors.length === 0) return [];
-		const msgs: UIMessage[] = [];
-		for (const node of ancestors) {
-			msgs.push({
-				id: `${node._id}-u`,
-				role: "user",
-				parts: [{ type: "text", text: node.userPrompt }],
-			});
-			msgs.push({
-				id: `${node._id}-a`,
-				role: "assistant",
-				parts: [{ type: "text", text: node.assistantResponse }],
-			});
-		}
-		return msgs;
-	}, [ancestors]);
+	const currentApiKey = getApiKey(provider);
 
-	const sessionId = useMemo(() => {
-		return fromNodeId
-			? `${conversationId}:${fromNodeId}:${ancestors?.length ?? 0}`
-			: `${conversationId}`;
-	}, [conversationId, fromNodeId, ancestors?.length]);
-
-	// Keep session stable during streaming so we don't reset the chat hook
-	const activeSessionIdRef = useRef(sessionId);
-	const statusRef = useRef<"streaming" | "submitted" | "ready" | "error">(
-		"ready",
-	);
-
-	if (
-		statusRef.current !== "streaming" &&
-		statusRef.current !== "submitted" &&
-		sessionId !== activeSessionIdRef.current
-	) {
-		activeSessionIdRef.current = sessionId;
-	}
-
-	const { messages, sendMessage, status } = useChat({
-		id: activeSessionIdRef.current,
-		transport: new TextStreamChatTransport({
-			api: "/api/chat",
-			body: {
-				conversationId,
-				nodeId: fromNodeId,
-			},
-		}),
-	});
-
-	statusRef.current = status;
-	const isLoading = status === "submitted" || status === "streaming";
-
-	// Seamless navigation: Navigate to new node as soon as it's created
-	useEffect(() => {
-		if (!isLoading) return;
-		if (!conversation?.nodes) return;
-
-		// Find a new child node created after the interaction started
-		// We can check if there's a node that is a child of the current fromNodeId (or root if none)
-		// and is very recent.
-		// However, a simpler check is just: is there a child of fromNodeId that we aren't currently on?
-
-		let targetNode: (typeof conversation.nodes)[0] | undefined;
-
-		if (fromNodeId) {
-			const children = conversation.nodes.filter(
-				(node) => node.parentId === fromNodeId,
-			);
-			// Sort by creation time descending
-			children.sort((a, b) => b._creationTime - a._creationTime);
-			targetNode = children[0];
-		} else {
-			const rootNodes = conversation.nodes.filter((node) => !node.parentId);
-			rootNodes.sort((a, b) => b._creationTime - a._creationTime);
-			targetNode = rootNodes[0];
+	const handleSend = async (text: string) => {
+		if (!currentApiKey) {
+			return;
 		}
 
-		// If we found a target node and it's different from where we are
-		// AND it looks like it matches our current interaction (e.g. created very recently)
-		// We navigate to it.
-		if (targetNode && targetNode._id !== fromNodeId) {
-			// We only navigate if this seems to be the node we just created.
-			// Since we are "isLoading", we assume the user just sent a message.
-			// The backend creates the node almost immediately.
-			navigate({
-				to: "/chat/$id",
-				params: { id: conversationId },
-				search: { fromNode: targetNode._id },
-				replace: true,
+		const userMessage: UIMessage = {
+			id: Date.now().toString(),
+			role: "user",
+			parts: [{ type: "text", text }],
+		};
+
+		setMessages((prev) => [...prev, userMessage]);
+		setIsLoading(true);
+
+		try {
+			const response = await fetch("/api/chat", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({
+					messages: messages.map(m => ({
+						role: m.role,
+						content: m.parts.map(p => p.type === "text" ? p.text : "").join("")
+					})).concat([{
+						role: "user",
+						content: text
+					}]),
+					provider,
+					apiKey: currentApiKey,
+					model,
+					customUrl,
+				}),
 			});
-		}
-	}, [conversation?.nodes, fromNodeId, isLoading, conversationId, navigate]);
 
-	const displayMessages = useMemo(() => {
-		if (!initialMessages?.length) return messages;
-
-		// If we have local messages (streaming), we might have also navigated to the new node already.
-		// If we navigated, the new node is in `initialMessages`.
-		// We need to de-duplicate.
-
-		if (messages.length > 0) {
-			// const lastLocalMessage = messages[messages.length - 1];
-			// const lastInitialMessage = initialMessages[initialMessages.length - 1];
-
-			// Simple check: if we have both, and we are streaming, the local `messages` are the "active" ones.
-			// If we navigated, `initialMessages` now includes the User/Assistant pair for the new node.
-			// But `messages` ALSO has them (or at least the user part and streaming assistant part).
-
-			// If we are streaming (messages.length > 0), we generally want to show
-			// the `initialMessages` UP TO the point where the stream starts.
-
-			// If we navigated to the new node, `initialMessages` has 2 more messages than before (User + AI).
-			// We should exclude those 2 from `initialMessages` and let `messages` handle the display
-			// so we get the live stream effect.
-
-			// Heuristic: Check if the last user message in initialMessages matches the first user message in messages
-			const firstLocalUserMsg = messages.find((m) => m.role === "user");
-
-			if (firstLocalUserMsg) {
-				// Find where this message starts in initialMessages
-				const matchIndex = initialMessages.findIndex(
-					(m) =>
-						m.role === "user" &&
-						m.parts[0].type === "text" &&
-						firstLocalUserMsg.parts[0].type === "text" &&
-						m.parts[0].text === firstLocalUserMsg.parts[0].text,
-				);
-
-				if (matchIndex !== -1) {
-					// Return everything before the match, plus the local messages
-					return [...initialMessages.slice(0, matchIndex), ...messages];
-				}
+			if (!response.ok) {
+				throw new Error("Failed to get response");
 			}
+
+			const reader = response.body?.getReader();
+			if (!reader) {
+				throw new Error("No response body");
+			}
+
+			const decoder = new TextDecoder();
+			let assistantMessage: UIMessage = {
+				id: (Date.now() + 1).toString(),
+				role: "assistant",
+				parts: [{ type: "text", text: "" }],
+			};
+
+			setMessages((prev) => [...prev, assistantMessage]);
+
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) break;
+
+				const chunk = decoder.decode(value);
+				if (assistantMessage.parts[0].type === "text") {
+					assistantMessage.parts[0].text += chunk;
+				}
+				setMessages((prev) => [
+					...prev.slice(0, -1),
+					{ ...assistantMessage },
+				]);
+			}
+		} catch (error) {
+			console.error("Error sending message:", error);
+		} finally {
+			setIsLoading(false);
 		}
-
-		return [...initialMessages, ...messages];
-	}, [initialMessages, messages]);
-
-	const handleSend = (text: string) => {
-		sendMessage({ role: "user", parts: [{ type: "text", text }] });
 	};
 
-	const handleNodeClick = (nodeId: string) => {
-		navigate({
-			to: "/chat/$id",
-			params: { id: conversationId },
-			search: { fromNode: nodeId },
-		});
-	};
-
-	const leftPanel = conversation?.nodes ? (
-		<FlowMiniMap
-			nodes={conversation.nodes}
-			conversationId={conversationId}
-			currentNodeId={fromNodeId}
-			onNodeClick={handleNodeClick}
-		/>
-	) : null;
-
-	const rightPanel = (
+	return (
 		<div className="flex flex-col h-screen overflow-auto">
 			{/* Header with sidebar trigger and fork indicator */}
 			<div className="border-b bg-background/80 backdrop-blur-sm">
@@ -201,8 +118,10 @@ export function ChatInterface({
 				</div>
 			</div>
 
+			<ApiProviderSettings />
+
 			{/* Messages */}
-			<MessageList messages={displayMessages} isLoading={isLoading} />
+			<MessageList messages={messages} isLoading={isLoading} />
 
 			{/* Input */}
 			<div className="border-t border-border/30 bg-background p-4">
@@ -211,6 +130,7 @@ export function ChatInterface({
 						onSend={handleSend}
 						isLoading={isLoading}
 						placeholder="Message Synapse"
+						disabled={!currentApiKey}
 					/>
 				</div>
 			</div>
@@ -221,6 +141,4 @@ export function ChatInterface({
 			</div>
 		</div>
 	);
-
-	return <ResizableLayout left={leftPanel} right={rightPanel} />;
 }

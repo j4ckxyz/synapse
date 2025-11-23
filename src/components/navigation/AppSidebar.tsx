@@ -1,8 +1,6 @@
-import { useUser } from "@clerk/clerk-react";
 import { useNavigate } from "@tanstack/react-router";
-import type { Doc } from "convex/_generated/dataModel";
 import { Home, MessageSquare, Plus } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -19,30 +17,48 @@ import {
 	SidebarMenuItem,
 	SidebarSeparator,
 } from "@/components/ui/sidebar";
-import {
-	useConversations,
-	useCreateConversation,
-} from "@/hooks/useConversation";
-import { HeaderUser } from "@/integrations/clerk/header-user";
+
+interface Conversation {
+	id: string;
+	title: string;
+	nodeCount: number;
+	createdAt: number;
+}
 
 export function AppSidebar() {
-	const { user } = useUser();
 	const navigate = useNavigate();
-	const conversations = useConversations(user?.id);
-	const createConversation = useCreateConversation();
+	const [conversations, setConversations] = useState<Conversation[]>([]);
 	const [isCreating, setIsCreating] = useState(false);
 
+	// Load conversations from localStorage
+	useEffect(() => {
+		const stored = localStorage.getItem("synapse-conversations");
+		if (stored) {
+			try {
+				setConversations(JSON.parse(stored));
+			} catch (e) {
+				console.error("Failed to parse conversations", e);
+			}
+		}
+	}, []);
+
 	const handleNewConversation = async () => {
-		if (!user?.id) return;
 		setIsCreating(true);
 		try {
-			const conversationId = await createConversation({
-				userId: user.id,
+			const newConversation: Conversation = {
+				id: Date.now().toString(),
 				title: "New Conversation",
-			});
+				nodeCount: 0,
+				createdAt: Date.now(),
+			};
+
+			const updated = [newConversation, ...conversations];
+			setConversations(updated);
+			localStorage.setItem("synapse-conversations", JSON.stringify(updated));
+
 			navigate({
 				to: "/chat/$id",
-				params: { id: conversationId },
+				params: { id: newConversation.id },
 				search: { fromNode: undefined },
 			});
 		} catch (error) {
@@ -100,8 +116,8 @@ export function AppSidebar() {
 					<SidebarGroupContent>
 						<ScrollArea className="h-[calc(100vh-300px)]">
 							<SidebarMenu>
-								{conversations?.map((conversation: Doc<"conversations">) => (
-									<SidebarMenuItem key={conversation._id}>
+								{conversations.map((conversation) => (
+									<SidebarMenuItem key={conversation.id}>
 										<SidebarMenuButton
 											asChild
 											className="flex items-center justify-between"
@@ -111,7 +127,7 @@ export function AppSidebar() {
 												onClick={() =>
 													navigate({
 														to: "/chat/$id",
-														params: { id: conversation._id },
+														params: { id: conversation.id },
 														search: { fromNode: undefined },
 													})
 												}
@@ -130,7 +146,7 @@ export function AppSidebar() {
 										</SidebarMenuButton>
 									</SidebarMenuItem>
 								))}
-								{conversations && conversations.length === 0 && (
+								{conversations.length === 0 && (
 									<div className="px-2 py-4 text-xs text-muted-foreground text-center">
 										No conversations yet
 									</div>
@@ -142,7 +158,9 @@ export function AppSidebar() {
 			</SidebarContent>
 
 			<SidebarFooter className="border-t p-4">
-				<HeaderUser />
+				<div className="text-xs text-muted-foreground text-center">
+					Synapse - Local AI Chat
+				</div>
 			</SidebarFooter>
 		</Sidebar>
 	);
